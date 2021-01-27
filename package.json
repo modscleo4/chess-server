@@ -1,0 +1,18 @@
+{
+  "name": "minesweeper-server",
+  "version": "1.0.0",
+  "description": "Minesweeper.js Server",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node ."
+  },
+  "dependencies": {
+    "ws": "^7.4.2"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.7"
+  },
+  "author": "",
+  "license": "Apache-2.0"
+}
