@@ -1,9 +1,10 @@
 import WebSocket from 'ws';
-const {Server} = WebSocket;
 
 import * as Chess from './chess.js';
 
-const ws = new Server({port: 8000});
+const port = parseInt(process.env.PORT || '3000');
+
+const ws = new WebSocket.Server({port});
 
 const games = new Map();
 
