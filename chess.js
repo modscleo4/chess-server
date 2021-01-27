@@ -439,7 +439,7 @@ export function generateArray() {
  * @param {number} newI
  * @param {number} newJ
  * @param {(Piece | null)[][]} board
- * @param {Piece} lastMoved
+ * @param {Piece | null} lastMoved
  * @return {boolean}
  */
 export function isValidMove(piece, i, j, newI, newJ, board, lastMoved) {
@@ -495,7 +495,7 @@ export function isValidMove(piece, i, j, newI, newJ, board, lastMoved) {
  * @param {number} i
  * @param {number} j
  * @param {string} desiredPiece
- * @param {Piece[][]} board
+ * @param {(Piece | null)[][]} board
  */
 export function promove(pawn, i, j, desiredPiece, board) {
     const piece = makePiece(desiredPiece, pawn.color, {Q: 'Queen', B: 'Bishop', N: 'Knight', R: 'Rook'}[desiredPiece] + pawn.color[0].toUpperCase(), {
@@ -529,7 +529,7 @@ export function promove(pawn, i, j, desiredPiece, board) {
  * @param {number} newI
  * @param {number} newJ
  * @param {(Piece | null)[][]} board
- * @param {Piece} lastMoved
+ * @param {Piece | null} lastMoved
  */
 export function findDuplicateMovement(piece, newI, newJ, board, lastMoved) {
     for (let x = 0; x < 8; x++) {

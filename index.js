@@ -6,6 +6,33 @@ const port = parseInt(process.env.PORT || '3000');
 
 const ws = new WebSocket.Server({port});
 
+/**
+ * @typedef {Object} Game
+ * @property {boolean | null} won
+ * @property {boolean | null} lose
+ * @property {boolean} draw
+ *
+ * @property {(Chess.Piece | null)[][]} board
+ *
+ * @property {WebSocket} player1
+ * @property {string} player1Color
+ *
+ * @property {WebSocket | null} player2
+ * @property {string} player2Color
+ *
+ * @property {string} currPlayer
+ * @property {Chess.Piece | null} lastMoved
+ *
+ * @property {string[]} movements
+ * @property {Chess.Piece[]} takenPieces
+ *
+ * @property {string | null} result
+ * @property {number} noCaptureOrPawnsQ
+ */
+
+/**
+ * @type {Map<string, Game>}
+ */
 const games = new Map();
 
 function playerLost(game, player) {
@@ -43,13 +70,20 @@ function gameDraw(game) {
 }
 
 const commands = {
+    /**
+     *
+     * @param {WebSocket} socket
+     */
     createGame: async (socket) => {
         let gameid;
         while (games.has(gameid = Math.random().toString().replace('.', '')));
 
+        /**
+         * @type {Game}
+         */
         const game = {
             won: null,
-            lost: null,
+            lose: null,
             draw: false,
 
             board: Chess.generateArray(),
@@ -65,6 +99,9 @@ const commands = {
 
             movements: [],
             takenPieces: [],
+
+            result: null,
+            noCaptureOrPawnsQ: 0,
         };
 
         console.log(`New Game: ${gameid}`);
@@ -79,20 +116,30 @@ const commands = {
         socket.gameid = gameid;
     },
 
+    /**
+     *
+     * @param {WebSocket} socket
+     * @param {Object} data
+     * @param {string} data.gameid
+     */
     joinGame: async (socket, {gameid}) => {
-        if (!games.has(gameid)) {
+        const game = games.get(gameid);
+
+        if (!game) {
             socket.send(JSON.stringify({
                 command: 'gameNotFound',
                 gameid: gameid,
             }));
-        } else if (games.get(gameid).player2) {
+
+            return;
+        } else if (game.player2) {
             socket.send(JSON.stringify({
                 command: 'gameFull',
                 gameid: gameid,
             }));
-        }
 
-        const game = games.get(gameid);
+            return;
+        }
 
         game.player2 = socket;
 
@@ -116,17 +163,27 @@ const commands = {
         }));
     },
 
-    commitMovement: async (socket, {i, j, newI, newJ}) => {
-        if (socket.won || socket.lost) {
-            return;
-        }
-
+    /**
+     *
+     * @param {WebSocket} socket
+     * @param {Object} data
+     * @param {number} data.i
+     * @param {number} data.j
+     * @param {number} data.newI
+     * @param {number} data.newJ
+     * @param {string} data.promoteTo
+     */
+    commitMovement: async (socket, {i, j, newI, newJ, promoteTo}) => {
         const game = games.get(socket.gameid);
         if (!game) {
             return;
         }
 
         if (game.player1 !== socket && game.player2 !== socket) {
+            return;
+        }
+
+        if (game.won || game.lose) {
             return;
         }
 
@@ -137,6 +194,10 @@ const commands = {
         }
 
         const piece = game.board[i][j];
+
+        if (!piece) {
+            return;
+        }
 
         if (newI === i && newJ === j) {
             return;
@@ -188,7 +249,7 @@ const commands = {
         const KingB_j = game.board[KingB_i].findIndex(p => p?.char === 'K' && p?.color === 'black');
 
         if (Chess.isChecked('white', KingW_i, KingW_j, game.board)) {
-            if (game.color === 'white') {
+            if (game.currPlayer === 'white') {
                 game.board = boardCopy;
                 return;
             } else {
@@ -197,7 +258,7 @@ const commands = {
         }
 
         if (Chess.isChecked('black', KingB_i, KingB_j, game.board)) {
-            if (game.color === 'black') {
+            if (game.currPlayer === 'black') {
                 game.board = boardCopy;
                 return;
             } else {
@@ -213,13 +274,13 @@ const commands = {
         takenPiece && game.takenPieces.push(takenPiece);
 
         if (piece.char === 'P' && [0, 7].includes(newI)) {
-            Chess.promove(piece, newI, newJ, game.promoteTo, game.board);
+            Chess.promove(piece, newI, newJ, promoteTo, game.board);
             promotion = true;
         }
 
         if (Chess.isCheckMate('white', KingW_i, KingW_j, game.board)) {
-            game.won = (game.color === 'black');
-            game.lose = (game.color === 'white');
+            game.won = (game.currPlayer === 'black');
+            game.lose = (game.currPlayer === 'white');
             game.draw = false;
 
             if (game.won) {
@@ -230,8 +291,8 @@ const commands = {
 
             checkMate = true;
         } else if (Chess.isCheckMate('black', KingB_i, KingB_j, game.board)) {
-            game.won = (game.color === 'white');
-            game.lose = (game.color === 'black');
+            game.won = (game.currPlayer === 'white');
+            game.lose = (game.currPlayer === 'black');
             game.draw = false;
 
             if (game.won) {
@@ -336,6 +397,11 @@ const commands = {
         }));
     },
 
+    /**
+     *
+     * @param {WebSocket} socket
+     * @param {Object} message
+     */
     restart: async (socket, message) => {
         const game = games.get(socket.gameid);
 
@@ -347,7 +413,6 @@ const commands = {
             game.players.forEach(socket => {
                 socket.send(JSON.stringify({
                     command: 'seed',
-                    seed: game.seed,
                 }));
             });
         }
