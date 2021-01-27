@@ -1,7 +1,7 @@
 {
-  "name": "minesweeper-server",
+  "name": "chess-server",
   "version": "1.0.0",
-  "description": "Minesweeper.js Server",
+  "description": "chess.js Server",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -14,5 +14,9 @@
     "nodemon": "^2.0.7"
   },
   "author": "",
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "engines": {
+    "node": "14.x",
+    "npm": "7.x"
+  }
 }
