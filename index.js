@@ -14,7 +14,7 @@ const ws = new WebSocket.Server({port});
  *
  * @property {(Chess.Piece | null)[][]} board
  *
- * @property {WebSocket} player1
+ * @property {WebSocket | null} player1
  * @property {string} player1Color
  *
  * @property {WebSocket | null} player2
@@ -23,7 +23,7 @@ const ws = new WebSocket.Server({port});
  * @property {string} currPlayer
  * @property {Chess.Piece | null} lastMoved
  *
- * @property {string[]} movements
+ * @property {{i: number, j: number, newI: number, newJ: number}[]} movements
  * @property {Chess.Piece[]} takenPieces
  *
  * @property {string | null} result
@@ -65,6 +65,7 @@ const commands = {
 
             movements: [],
             takenPieces: [],
+            currentMove: [],
 
             result: null,
             noCaptureOrPawnsQ: 0,
@@ -76,7 +77,10 @@ const commands = {
         socket.send(JSON.stringify({
             command: 'createGame',
             gameid,
-            game,
+            game: {
+                playerColor: game.player1 === socket ? game.player1Color : game.player2Color,
+                currPlayer: game.currPlayer,
+            }
         }));
 
         socket.gameid = gameid;
@@ -98,7 +102,7 @@ const commands = {
             }));
 
             return;
-        } else if (game.player2) {
+        } else if (game.player1 && game.player2) {
             socket.send(JSON.stringify({
                 command: 'gameFull',
                 gameid: gameid,
@@ -107,13 +111,18 @@ const commands = {
             return;
         }
 
-        game.player2 = socket;
+        if (!game.player1) {
+            game.player1 = socket;
+        } else {
+            game.player2 = socket;
+        }
 
         socket.send(JSON.stringify({
             command: 'joinGame',
             gameid: gameid,
             game: {
-                player2Color: game.player2Color,
+                movements: game.movements,
+                playerColor: game.player1 === socket ? game.player1Color : game.player2Color,
                 currPlayer: game.currPlayer,
             },
         }));
@@ -142,10 +151,6 @@ const commands = {
     commitMovement: async (socket, {i, j, newI, newJ, promoteTo}) => {
         const game = games.get(socket.gameid);
         if (!game) {
-            return;
-        }
-
-        if (game.player1 !== socket && game.player2 !== socket) {
             return;
         }
 
@@ -294,41 +299,7 @@ const commands = {
             game.result = '½–½';
         }
 
-        const duplicate = Chess.findDuplicateMovement(piece, newI, newJ, game.board, game.lastMoved);
-        let mov = `${piece.char !== 'P' ? piece.char : ''}`;
-        if (duplicate?.x === i) {
-            mov += ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][j];
-        }
-
-        if (duplicate?.y === j) {
-            mov += 1 + i;
-        }
-
-        if (capture) {
-            if (piece.char === 'P') {
-                mov += ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][j];
-            }
-
-            mov += 'x';
-        }
-
-        mov += `${['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][newJ]}${1 + newI}`;
-
-        if (enPassant) {
-            mov += ' e.p';
-        }
-
-        if (checkMate) {
-            game.movements.push(mov + '#');
-        } else if (check) {
-            game.movements.push(mov + '+');
-        } else if (castling) {
-            game.movements.push(['0-0', '0-0-0'][castling - 1]);
-        } else if (promotion) {
-            game.movements.push(`${['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][newJ]}${1 + newI}${promoteTo}`);
-        } else {
-            game.movements.push(mov);
-        }
+        game.movements.push({i, j, newI, newJ});
 
         if (!capture || piece.char !== 'P') {
             game.noCaptureOrPawnsQ++;
@@ -386,7 +357,29 @@ const commands = {
 };
 
 ws.on('connection', async socket => {
+    socket.on('close', () => {
+        const game = games.get(socket.gameid);
 
+        if (!game) {
+            return;
+        }
+
+        if (game.player1 === socket) {
+            game.player1 = null;
+            game.player2?.send(JSON.stringify({
+                command: 'playerDisconnected',
+            }));
+        } else {
+            game.player2 = null;
+            game.player1?.send(JSON.stringify({
+                command: 'playerDisconnected',
+            }));
+        }
+
+        if (!game.player1 && !game.player2) {
+            games.delete(socket.gameid);
+        }
+    });
 
     socket.on('message', async message => {
         message = JSON.parse(message);
