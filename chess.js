@@ -317,16 +317,16 @@ export function insufficientMaterial(board) {
 
 /**
  *
- * @param {string[]} movements
+ * @param {{i: number, j: number, newI: number, newJ: number, str: string}[]} movements
  */
 export function threefoldRepetition(movements) {
     if (movements.length >= 12 && movements.length % 2 === 0) {
         let i = movements.length - 12;
         debugger;
-        return movements[i + 0] === movements[i + 4] && movements[i + 4] === movements[i + 8]
-            && movements[i + 2] === movements[i + 6] && movements[i + 6] === movements[i + 10]
-            && movements[i + 1] === movements[i + 5] && movements[i + 5] === movements[i + 9]
-            && movements[i + 3] === movements[i + 7] && movements[i + 7] === movements[i + 11];
+        return movements[i + 0].str === movements[i + 4].str && movements[i + 4].str === movements[i + 8].str
+            && movements[i + 2].str === movements[i + 6].str && movements[i + 6].str === movements[i + 10].str
+            && movements[i + 1].str === movements[i + 5].str && movements[i + 5].str === movements[i + 9].str
+            && movements[i + 3].str === movements[i + 7].str && movements[i + 7].str === movements[i + 11].str;
     }
 
     return false;

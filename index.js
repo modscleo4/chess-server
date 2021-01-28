@@ -23,8 +23,9 @@ const ws = new WebSocket.Server({port});
  * @property {string} currPlayer
  * @property {Chess.Piece | null} lastMoved
  *
- * @property {{i: number, j: number, newI: number, newJ: number}[]} movements
+ * @property {{i: number, j: number, newI: number, newJ: number, str: string}[]} movements
  * @property {Chess.Piece[]} takenPieces
+ * @property {*[]} currentMove
  *
  * @property {string | null} result
  * @property {number} noCaptureOrPawnsQ
@@ -129,11 +130,11 @@ const commands = {
 
         socket.gameid = gameid;
 
-        game.player1.send(JSON.stringify({
+        game.player1?.send(JSON.stringify({
             command: 'start',
         }));
 
-        game.player2.send(JSON.stringify({
+        game.player2?.send(JSON.stringify({
             command: 'start',
         }));
     },
@@ -179,15 +180,9 @@ const commands = {
         }
 
         let capture = false;
-        let enPassant = false;
-        let promotion = false;
-        let castling = 0;
-        let check = false;
-        let checkMate = false;
 
         let takenPiece = game.board[newI][newJ];
         if (piece.char === 'P' && !takenPiece && newJ !== j && ((piece.color === 'white' && i === 3) || (piece.color === 'black' && i === 4))) {
-            enPassant = true;
             takenPiece = game.board[i][newJ];
             game.board[i][newJ] = null;
         }
@@ -199,17 +194,19 @@ const commands = {
         game.board[i][j] = null;
         game.board[newI][newJ] = piece;
 
+        if (piece.char === 'P' && [0, 7].includes(newI)) {
+            Chess.promove(piece, newI, newJ, promoteTo, game.board);
+        }
+
         if (piece.char === 'K' && Math.abs(newJ - j) === 2) {
             if (newJ > j) {
                 const rook = game.board[i][7];
                 game.board[i][j + 1] = rook;
                 game.board[i][7] = null;
-                castling = 1;
             } else {
                 const rook = game.board[i][0];
                 game.board[i][j - 1] = rook;
                 game.board[i][0] = null;
-                castling = 2;
             }
         }
 
@@ -223,8 +220,6 @@ const commands = {
             if (game.currPlayer === 'white') {
                 game.board = boardCopy;
                 return;
-            } else {
-                check = true;
             }
         }
 
@@ -232,8 +227,6 @@ const commands = {
             if (game.currPlayer === 'black') {
                 game.board = boardCopy;
                 return;
-            } else {
-                check = true;
             }
         }
 
@@ -243,11 +236,6 @@ const commands = {
 
         piece.neverMoved = false;
         takenPiece && game.takenPieces.push(takenPiece);
-
-        if (piece.char === 'P' && [0, 7].includes(newI)) {
-            Chess.promove(piece, newI, newJ, promoteTo, game.board);
-            promotion = true;
-        }
 
         if (Chess.isCheckMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
             game.won = (game.currPlayer === 'black');
@@ -259,8 +247,6 @@ const commands = {
             } else {
                 game.result = '1-0';
             }
-
-            checkMate = true;
         } else if (Chess.isCheckMate('black', KingB_i, KingB_j, game.board, game.lastMoved)) {
             game.won = (game.currPlayer === 'white');
             game.lose = (game.currPlayer === 'black');
@@ -271,8 +257,6 @@ const commands = {
             } else {
                 game.result = '0-1';
             }
-
-            checkMate = true;
         } else if (Chess.isStaleMate('black', KingB_i, KingB_j, game.board, game.lastMoved) || Chess.isStaleMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
             game.won = false;
             game.lose = false;
@@ -299,7 +283,7 @@ const commands = {
             game.result = '½–½';
         }
 
-        game.movements.push({i, j, newI, newJ});
+        game.movements.push({i, j, newI, newJ, get str() {return `${this.i}${this.j} ${this.newI}${this.newJ}`;} });
 
         if (!capture || piece.char !== 'P') {
             game.noCaptureOrPawnsQ++;
@@ -311,48 +295,29 @@ const commands = {
 
         game.lastMoved = piece;
 
-        game.player1.send(JSON.stringify({
+        game.player1?.send(JSON.stringify({
             command: 'commitMovement',
             i,
             j,
             newI,
             newJ,
             game: {
-                currPlayer: game.currPlayer
+                currPlayer: game.currPlayer,
+                promoteTo,
             },
         }));
 
-        game.player2.send(JSON.stringify({
+        game.player2?.send(JSON.stringify({
             command: 'commitMovement',
             i,
             j,
             newI,
             newJ,
             game: {
-                currPlayer: game.currPlayer
+                currPlayer: game.currPlayer,
+                promoteTo,
             },
         }));
-    },
-
-    /**
-     *
-     * @param {WebSocket} socket
-     * @param {Object} message
-     */
-    restart: async (socket, message) => {
-        const game = games.get(socket.gameid);
-
-        if (!game) {
-            return;
-        }
-
-        if (game.host === socket) {
-            game.players.forEach(socket => {
-                socket.send(JSON.stringify({
-                    command: 'seed',
-                }));
-            });
-        }
     },
 };
 
