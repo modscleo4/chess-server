@@ -98,9 +98,10 @@ export function checkDCollisions(i, j, newI, newJ, board) {
  *
  * @param {string} color
  * @param {(Piece | null)[][]} board
+ * @param {Piece | null} lastMoved
  * @return {boolean}
  */
-export function hasValidMovements(color, board) {
+export function hasValidMovements(color, board, lastMoved) {
     for (let i = 0; i < 8; i++) {
         for (let j = 0; j < 8; j++) {
             const piece = board[i][j];
@@ -108,7 +109,7 @@ export function hasValidMovements(color, board) {
             if (piece?.color === color) {
                 for (let newI = 0; newI < 8; newI++) {
                     for (let newJ = 0; newJ < 8; newJ++) {
-                        if (isValidMove(piece, i, j, newI, newJ, board)) {
+                        if (isValidMove(piece, i, j, newI, newJ, board, lastMoved)) {
                             return true;
                         }
                     }
@@ -239,10 +240,11 @@ export function isChecked(color, i, j, board) {
  * @param {number} i
  * @param {number} j
  * @param {(Piece | null)[][]} board
+ * @param {(Piece | null)} lastMoved
  * @return {boolean}
  */
-export function isCheckMate(color, i, j, board) {
-    if (hasValidMovements(color, board)) {
+export function isCheckMate(color, i, j, board, lastMoved) {
+    if (hasValidMovements(color, board, lastMoved)) {
         return false;
     }
 
@@ -255,10 +257,11 @@ export function isCheckMate(color, i, j, board) {
  * @param {number} i
  * @param {number} j
  * @param {(Piece | null)[][]} board
+ * @param {(Piece | null)} lastMoved
  * @return {boolean}
  */
-export function isStaleMate(color, i, j, board) {
-    if (hasValidMovements(color, board)) {
+export function isStaleMate(color, i, j, board, lastMoved) {
+    if (hasValidMovements(color, board, lastMoved)) {
         return false;
     }
 
@@ -457,7 +460,7 @@ export function isValidMove(piece, i, j, newI, newJ, board, lastMoved) {
         return false;
     }
 
-    const boardCopy = [...board.map(r => [...r])];
+    const boardCopy = board.map(r => [...r]);
 
     boardCopy[i][j] = null;
 
@@ -498,6 +501,10 @@ export function isValidMove(piece, i, j, newI, newJ, board, lastMoved) {
  * @param {(Piece | null)[][]} board
  */
 export function promove(pawn, i, j, desiredPiece, board) {
+    if (!['Q', 'B', 'N', 'R'].includes(desiredPiece)) {
+        return false;
+    }
+
     const piece = makePiece(desiredPiece, pawn.color, {Q: 'Queen', B: 'Bishop', N: 'Knight', R: 'Rook'}[desiredPiece] + pawn.color[0].toUpperCase(), {
         Q: (i, j, newI, newJ, board) => {
             return ((i === newI || j === newJ) || Math.abs(newI - i) === Math.abs(newJ - j))

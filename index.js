@@ -35,40 +35,6 @@ const ws = new WebSocket.Server({port});
  */
 const games = new Map();
 
-function playerLost(game, player) {
-    console.log(`Player ${player} lost game ${game}`);
-
-    game.players.forEach(p => {
-        p.send(JSON.stringify({
-            command: 'lost',
-            isPlayer: p === player,
-            isHost: game.host === player,
-        }));
-    });
-}
-
-function playerWon(game, player) {
-    console.log(`Player ${player} won game ${game}`);
-
-    game.players.forEach(p => {
-        p.send(JSON.stringify({
-            command: 'won',
-            isPlayer: p === player,
-            isHost: game.host === player,
-        }));
-    });
-}
-
-function gameDraw(game) {
-    console.log(`Game ${game} ended in a Draw`);
-
-    game.players.forEach(p => {
-        p.send(JSON.stringify({
-            command: 'draw',
-        }));
-    });
-}
-
 const commands = {
     /**
      *
@@ -223,7 +189,7 @@ const commands = {
 
         capture = !!takenPiece;
 
-        const boardCopy = [...game.board.map(r => [...r])];
+        const boardCopy = game.board.map(r => [...r]);
 
         game.board[i][j] = null;
         game.board[newI][newJ] = piece;
@@ -278,7 +244,7 @@ const commands = {
             promotion = true;
         }
 
-        if (Chess.isCheckMate('white', KingW_i, KingW_j, game.board)) {
+        if (Chess.isCheckMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
             game.won = (game.currPlayer === 'black');
             game.lose = (game.currPlayer === 'white');
             game.draw = false;
@@ -290,7 +256,7 @@ const commands = {
             }
 
             checkMate = true;
-        } else if (Chess.isCheckMate('black', KingB_i, KingB_j, game.board)) {
+        } else if (Chess.isCheckMate('black', KingB_i, KingB_j, game.board, game.lastMoved)) {
             game.won = (game.currPlayer === 'white');
             game.lose = (game.currPlayer === 'black');
             game.draw = false;
@@ -302,7 +268,7 @@ const commands = {
             }
 
             checkMate = true;
-        } else if (Chess.isStaleMate('black', KingB_i, KingB_j, game.board) || Chess.isStaleMate('white', KingW_i, KingW_j, game.board)) {
+        } else if (Chess.isStaleMate('black', KingB_i, KingB_j, game.board, game.lastMoved) || Chess.isStaleMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
             game.won = false;
             game.lose = false;
             game.draw = true;
@@ -349,7 +315,7 @@ const commands = {
         mov += `${['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][newJ]}${1 + newI}`;
 
         if (enPassant) {
-            mov += 'e.p';
+            mov += ' e.p';
         }
 
         if (checkMate) {
@@ -359,7 +325,7 @@ const commands = {
         } else if (castling) {
             game.movements.push(['0-0', '0-0-0'][castling - 1]);
         } else if (promotion) {
-            game.movements.push(`${['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][newJ]}${1 + newI}${piece.char}`);
+            game.movements.push(`${['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][newJ]}${1 + newI}${promoteTo}`);
         } else {
             game.movements.push(mov);
         }
