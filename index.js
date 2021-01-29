@@ -61,6 +61,8 @@ const commands = {
      * @param {string} data.playerName
      */
     createGame: async (socket, {timePlayer, timeInc, playerName}) => {
+        timePlayer === -1 && (timePlayer = Infinity);
+
         let gameid;
         while (games.has(gameid = Math.random().toString().replace('.', '')));
 
@@ -182,7 +184,7 @@ const commands = {
                 player1Timer: game.player1Timer,
                 player2Timer: game.player2Timer,
 
-                timePlayer: game.timePlayer,
+                timePlayer: game.timePlayer === Infinity ? -1 : game.timePlayer,
                 timeInc: game.timeInc,
             },
         }));
@@ -247,7 +249,7 @@ const commands = {
                 player1Timer: game.player1Timer,
                 player2Timer: game.player2Timer,
 
-                timePlayer: game.timePlayer,
+                timePlayer: game.timePlayer === Infinity ? -1 : game.timePlayer,
                 timeInc: game.timeInc,
             },
         }));
