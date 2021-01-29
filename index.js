@@ -8,20 +8,26 @@ const ws = new WebSocket.Server({port});
 
 /**
  * @typedef {Object} Game
- * @property {boolean | null} won
- * @property {boolean | null} lose
+ * @property {string | null} won
  * @property {boolean} draw
  *
  * @property {(Chess.Piece | null)[][]} board
  *
+ * @property {number} timePlayer
+ * @property {number} timeInc
+ *
  * @property {WebSocket | null} player1
  * @property {string} player1Name
  * @property {boolean} player1Connected
+ * @property {number} player1Timer
+ * @property {NodeJS.Timeout | null} player1TimerFn
  * @property {string} player1Color
  *
  * @property {WebSocket | null} player2
  * @property {string} player2Name
  * @property {boolean} player2Connected
+ * @property {number} player2Timer
+ * @property {NodeJS.Timeout | null} player2TimerFn
  * @property {string} player2Color
  *
  * @property {string} currPlayer
@@ -50,9 +56,11 @@ const commands = {
      *
      * @param {WebSocket} socket
      * @param {Object} data
-     * @param {string} playerName
+     * @param {number} data.timePlayer
+     * @param {number} data.timeInc
+     * @param {string} data.playerName
      */
-    createGame: async (socket, {playerName}) => {
+    createGame: async (socket, {timePlayer, timeInc, playerName}) => {
         let gameid;
         while (games.has(gameid = Math.random().toString().replace('.', '')));
 
@@ -61,19 +69,25 @@ const commands = {
          */
         const game = {
             won: null,
-            lose: null,
             draw: false,
+
+            timePlayer,
+            timeInc,
 
             board: Chess.generateArray(),
 
             player1: socket,
             player1Name: playerName,
             player1Connected: true,
+            player1Timer: 0,
+            player1TimerFn: null,
             player1Color: 'white',
 
             player2: null,
             player2Name: '',
             player2Connected: false,
+            player2Timer: 0,
+            player2TimerFn: null,
             player2Color: 'black',
 
             currPlayer: 'white',
@@ -92,7 +106,7 @@ const commands = {
             spectators: new Set(),
         };
 
-        console.log(`New Game: ${gameid}`);
+        console.log(`New Game: ${gameid}: ${timePlayer} - ${timeInc}`);
         games.set(gameid, game);
 
         socket.send(JSON.stringify({
@@ -124,7 +138,7 @@ const commands = {
             }));
 
             return;
-        } else if (game.player1Connected && game.player2Connected) {
+        } else if (game.player1Connected && game.player2Connected && game.player1 !== socket && game.player2 !== socket) {
             socket.send(JSON.stringify({
                 command: 'gameFull',
                 gameid: gameid,
@@ -137,7 +151,7 @@ const commands = {
             game.player1 = socket;
             game.player1Name = playerName;
             game.player1Connected = true;
-        } else if (game.player2 !== socket) {
+        } else if (!game.player2Connected && game.player2 !== socket) {
             game.player2 = socket;
             game.player2Name = playerName;
             game.player2Connected = true;
@@ -146,6 +160,8 @@ const commands = {
                 command: 'alreadyConnected',
                 gameid: gameid,
             }));
+
+            socket.close();
 
             return;
         }
@@ -162,6 +178,12 @@ const commands = {
                 movements: game.pureMovements,
                 playerColor: game.player1 === socket ? game.player1Color : game.player2Color,
                 currPlayer: game.currPlayer,
+
+                player1Timer: game.player1Timer,
+                player2Timer: game.player2Timer,
+
+                timePlayer: game.timePlayer,
+                timeInc: game.timeInc,
             },
         }));
 
@@ -221,6 +243,12 @@ const commands = {
                 movements: game.pureMovements,
                 playerColor: 'white',
                 currPlayer: game.currPlayer,
+
+                player1Timer: game.player1Timer,
+                player2Timer: game.player2Timer,
+
+                timePlayer: game.timePlayer,
+                timeInc: game.timeInc,
             },
         }));
 
@@ -251,7 +279,7 @@ const commands = {
             return;
         }
 
-        if (game.won || game.lose) {
+        if (game.won || game.draw) {
             return;
         }
 
@@ -347,8 +375,7 @@ const commands = {
         takenPiece && game.takenPieces.push(takenPiece);
 
         if (Chess.isCheckMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
-            game.won = (game.currPlayer === 'black');
-            game.lose = (game.currPlayer === 'white');
+            game.won = 'black';
             game.draw = false;
 
             if (game.won) {
@@ -359,8 +386,7 @@ const commands = {
 
             checkMate = true;
         } else if (Chess.isCheckMate('black', KingB_i, KingB_j, game.board, game.lastMoved)) {
-            game.won = (game.currPlayer === 'white');
-            game.lose = (game.currPlayer === 'black');
+            game.won = 'white';
             game.draw = false;
 
             if (game.won) {
@@ -371,32 +397,28 @@ const commands = {
 
             checkMate = true;
         } else if (Chess.isStaleMate('black', KingB_i, KingB_j, game.board, game.lastMoved) || Chess.isStaleMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
-            game.won = false;
-            game.lose = false;
+            game.won = null;
             game.draw = true;
 
             game.result = '½–½';
         } else if (Chess.insufficientMaterial(game.board)) {
-            game.won = false;
-            game.lose = false;
+            game.won = null;
             game.draw = true;
 
             game.result = '½–½';
         } else if (game.noCaptureOrPawnsQ === 100) {
-            game.won = false;
-            game.lose = false;
+            game.won = null;
             game.draw = true;
 
             game.result = '½–½';
         } else if (Chess.threefoldRepetition(game.movements)) {
-            game.won = false;
-            game.lose = false;
+            game.won = null;
             game.draw = true;
 
             game.result = '½–½';
         }
 
-        const duplicate = Chess.findDuplicateMovement(piece, i, j, newI, newJ, boardCopy, this.game.lastMoved);
+        const duplicate = Chess.findDuplicateMovement(piece, i, j, newI, newJ, boardCopy, game.lastMoved);
         let mov = `${piece.char !== 'P' ? piece.char : ''}`;
 
         if (duplicate) {
@@ -458,6 +480,8 @@ const commands = {
             game: {
                 currPlayer: game.currPlayer,
                 promoteTo,
+                player1Timer: game.player1Timer,
+                player2Timer: game.player2Timer,
             },
         }));
 
@@ -470,8 +494,42 @@ const commands = {
             game: {
                 currPlayer: game.currPlayer,
                 promoteTo,
+                player1Timer: game.player1Timer,
+                player2Timer: game.player2Timer,
             },
         }));
+
+        if (game.movements.length >= 2) {
+            if (game.currPlayer === 'white') {
+                game.player1TimerFn = setInterval(() => {
+                    game.player1Timer++;
+                    if (game.player1Timer >= game.timePlayer * 60) {
+                        game.won = 'black';
+                        game.result = '0–1';
+
+                        clearInterval(game.player1TimerFn);
+                        clearInterval(game.player2TimerFn);
+                    }
+                }, 1000);
+
+                game.player2TimerFn && clearInterval(game.player2TimerFn) && (game.player2TimerFn = null);
+                game.player1Timer && (game.player1Timer -= game.timeInc);
+            } else {
+                game.player2TimerFn = setInterval(() => {
+                    game.player2Timer++;
+                    if (game.player2Timer >= game.timePlayer * 60) {
+                        game.won = 'white';
+                        game.result = '1–0';
+
+                        clearInterval(game.player1TimerFn);
+                        clearInterval(game.player2TimerFn);
+                    }
+                }, 1000);
+
+                game.player1TimerFn && clearInterval(game.player1TimerFn) && (game.player1TimerFn = null);
+                game.player1Timer && (game.player1Timer -= game.timeInc);
+            }
+        }
 
         game.spectators.forEach(spectator => {
             spectator.send(JSON.stringify({
@@ -483,6 +541,8 @@ const commands = {
                 game: {
                     currPlayer: game.currPlayer,
                     promoteTo,
+                    player1Timer: game.player1Timer,
+                    player2Timer: game.player2Timer,
                 },
             }));
         });
