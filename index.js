@@ -15,9 +15,13 @@ const ws = new WebSocket.Server({port});
  * @property {(Chess.Piece | null)[][]} board
  *
  * @property {WebSocket | null} player1
+ * @property {string} player1Name
+ * @property {boolean} player1Connected
  * @property {string} player1Color
  *
  * @property {WebSocket | null} player2
+ * @property {string} player2Name
+ * @property {boolean} player2Connected
  * @property {string} player2Color
  *
  * @property {string} currPlayer
@@ -32,6 +36,8 @@ const ws = new WebSocket.Server({port});
  * @property {number} noCaptureOrPawnsQ
  *
  * @property {number | null} timeout
+ *
+ * @property {Set<WebSocket>} spectators
  */
 
 /**
@@ -43,8 +49,10 @@ const commands = {
     /**
      *
      * @param {WebSocket} socket
+     * @param {Object} data
+     * @param {string} playerName
      */
-    createGame: async (socket) => {
+    createGame: async (socket, {playerName}) => {
         let gameid;
         while (games.has(gameid = Math.random().toString().replace('.', '')));
 
@@ -59,9 +67,13 @@ const commands = {
             board: Chess.generateArray(),
 
             player1: socket,
+            player1Name: playerName,
+            player1Connected: true,
             player1Color: 'white',
 
             player2: null,
+            player2Name: '',
+            player2Connected: false,
             player2Color: 'black',
 
             currPlayer: 'white',
@@ -76,6 +88,8 @@ const commands = {
             noCaptureOrPawnsQ: 0,
 
             timeout: null,
+
+            spectators: new Set(),
         };
 
         console.log(`New Game: ${gameid}`);
@@ -98,8 +112,9 @@ const commands = {
      * @param {WebSocket} socket
      * @param {Object} data
      * @param {string} data.gameid
+     * @param {string} data.playerName
      */
-    joinGame: async (socket, {gameid}) => {
+    joinGame: async (socket, {gameid, playerName}) => {
         const game = games.get(gameid);
 
         if (!game) {
@@ -109,7 +124,7 @@ const commands = {
             }));
 
             return;
-        } else if (game.player1 && game.player2) {
+        } else if (game.player1Connected && game.player2Connected) {
             socket.send(JSON.stringify({
                 command: 'gameFull',
                 gameid: gameid,
@@ -118,10 +133,21 @@ const commands = {
             return;
         }
 
-        if (!game.player1) {
+        if (!game.player1Connected && game.player1 !== socket) {
             game.player1 = socket;
-        } else {
+            game.player1Name = playerName;
+            game.player1Connected = true;
+        } else if (game.player2 !== socket) {
             game.player2 = socket;
+            game.player2Name = playerName;
+            game.player2Connected = true;
+        } else {
+            socket.send(JSON.stringify({
+                command: 'alreadyConnected',
+                gameid: gameid,
+            }));
+
+            return;
         }
 
         if (game.timeout) {
@@ -143,11 +169,70 @@ const commands = {
 
         game.player1?.send(JSON.stringify({
             command: 'start',
+            game: {
+                player1Name: game.player1Name,
+                player2Name: game.player2Name,
+            },
         }));
 
         game.player2?.send(JSON.stringify({
             command: 'start',
+            game: {
+                player1Name: game.player1Name,
+                player2Name: game.player2Name,
+            },
         }));
+
+        game.spectators.forEach(spectator => {
+            spectator.send(JSON.stringify({
+                command: 'start',
+                game: {
+                    player1Name: game.player1Name,
+                    player2Name: game.player2Name,
+                },
+            }));
+        });
+    },
+
+    /**
+     *
+     * @param {WebSocket} socket
+     * @param {Object} data
+     * @param {string} gameid
+     */
+    spectate: async (socket, {gameid}) => {
+        const game = games.get(gameid);
+
+        if (!game) {
+            socket.send(JSON.stringify({
+                command: 'gameNotFound',
+                gameid: gameid,
+            }));
+
+            return;
+        }
+
+        game.spectators.add(socket);
+
+        socket.send(JSON.stringify({
+            command: 'joinGame',
+            gameid: gameid,
+            game: {
+                movements: game.pureMovements,
+                playerColor: 'white',
+                currPlayer: game.currPlayer,
+            },
+        }));
+
+        if (game.player1Connected && game.player2Connected) {
+            socket.send(JSON.stringify({
+                command: 'start',
+                game: {
+                    player1Name: game.player1Name,
+                    player2Name: game.player2Name,
+                },
+            }));
+        }
     },
 
     /**
@@ -387,6 +472,20 @@ const commands = {
                 promoteTo,
             },
         }));
+
+        game.spectators.forEach(spectator => {
+            spectator.send(JSON.stringify({
+                command: 'commitMovement',
+                i,
+                j,
+                newI,
+                newJ,
+                game: {
+                    currPlayer: game.currPlayer,
+                    promoteTo,
+                },
+            }));
+        });
     },
 };
 
@@ -399,18 +498,32 @@ ws.on('connection', async socket => {
         }
 
         if (game.player1 === socket) {
-            game.player1 = null;
+            game.player1Connected = false;
             game.player2?.send(JSON.stringify({
                 command: 'playerDisconnected',
             }));
-        } else {
-            game.player2 = null;
+
+            game.spectators.forEach(socket => {
+                socket.send(JSON.stringify({
+                    command: 'playerDisconnected',
+                }));
+            });
+        } else if (game.player2 === socket) {
+            game.player2Connected = false;
             game.player1?.send(JSON.stringify({
                 command: 'playerDisconnected',
             }));
+
+            game.spectators.forEach(socket => {
+                socket.send(JSON.stringify({
+                    command: 'playerDisconnected',
+                }));
+            });
+        } else {
+            game.spectators.delete(socket);
         }
 
-        if (!game.player1 && !game.player2) {
+        if (!game.player1Connected && !game.player2Connected) {
             game.timeout = setTimeout(() => {
                 games.delete(socket.gameid);
             }, 1000 * 60 * 5);
