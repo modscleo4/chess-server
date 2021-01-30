@@ -531,6 +531,11 @@ const commands = {
                 game.player1TimerFn && clearInterval(game.player1TimerFn) && (game.player1TimerFn = null);
                 game.player1Timer && (game.player1Timer -= game.timeInc);
             }
+
+            if (game.result) {
+                clearInterval(game.player1TimerFn);
+                clearInterval(game.player2TimerFn);
+            }
         }
 
         game.spectators.forEach(spectator => {
