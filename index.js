@@ -501,40 +501,32 @@ const commands = {
             },
         }));
 
-        if (game.movements.length >= 2) {
+        game.player1TimerFn && clearInterval(game.player1TimerFn);
+        game.player2TimerFn && clearInterval(game.player2TimerFn);
+        game.player1TimerFn = null;
+        game.player2TimerFn = null;
+
+        if (game.movements.length >= 2 && !game.result) {
             if (game.currPlayer === 'white') {
                 game.player1TimerFn = setInterval(() => {
                     game.player1Timer++;
                     if (game.player1Timer >= game.timePlayer * 60) {
                         game.won = 'black';
                         game.result = '0–1';
-
-                        clearInterval(game.player1TimerFn);
-                        clearInterval(game.player2TimerFn);
                     }
                 }, 1000);
 
-                game.player2TimerFn && clearInterval(game.player2TimerFn) && (game.player2TimerFn = null);
-                game.player1Timer && (game.player1Timer -= game.timeInc);
+                game.player1Timer && (game.player1Timer += game.timeInc);
             } else {
                 game.player2TimerFn = setInterval(() => {
                     game.player2Timer++;
                     if (game.player2Timer >= game.timePlayer * 60) {
                         game.won = 'white';
                         game.result = '1–0';
-
-                        clearInterval(game.player1TimerFn);
-                        clearInterval(game.player2TimerFn);
                     }
                 }, 1000);
 
-                game.player1TimerFn && clearInterval(game.player1TimerFn) && (game.player1TimerFn = null);
-                game.player1Timer && (game.player1Timer -= game.timeInc);
-            }
-
-            if (game.result) {
-                clearInterval(game.player1TimerFn);
-                clearInterval(game.player2TimerFn);
+                game.player1Timer && (game.player1Timer += game.timeInc);
             }
         }
 
