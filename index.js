@@ -6,6 +6,17 @@ const port = parseInt(process.env.PORT || '3000');
 
 const ws = new WebSocket.Server({port});
 
+import crypto from 'crypto';
+
+/**
+ *
+ * @param {number} [n=64]
+ * @return {string}
+ */
+function randomString(n = 64) {
+    return crypto.randomBytes(n).toString('hex');
+}
+
 /**
  * @typedef {Object} Game
  * @property {string | null} won
@@ -22,6 +33,7 @@ const ws = new WebSocket.Server({port});
  * @property {number} player1Timer
  * @property {NodeJS.Timeout | null} player1TimerFn
  * @property {string} player1Color
+ * @property {string | null} player1Secret
  *
  * @property {WebSocket | null} player2
  * @property {string} player2Name
@@ -29,6 +41,7 @@ const ws = new WebSocket.Server({port});
  * @property {number} player2Timer
  * @property {NodeJS.Timeout | null} player2TimerFn
  * @property {string} player2Color
+ * @property {string | null} player2Secret
  *
  * @property {string} currPlayer
  * @property {Chess.Piece | null} lastMoved
@@ -84,6 +97,7 @@ const commands = {
             player1Timer: 0,
             player1TimerFn: null,
             player1Color: 'white',
+            player1Secret: randomString(),
 
             player2: null,
             player2Name: '',
@@ -91,6 +105,7 @@ const commands = {
             player2Timer: 0,
             player2TimerFn: null,
             player2Color: 'black',
+            player2Secret: null,
 
             currPlayer: 'white',
             lastMoved: null,
@@ -117,6 +132,7 @@ const commands = {
             game: {
                 playerColor: game.player1 === socket ? game.player1Color : game.player2Color,
                 currPlayer: game.currPlayer,
+                secret: game.player1 === socket ? game.player1Secret : game.player2Secret,
             }
         }));
 
@@ -130,17 +146,19 @@ const commands = {
      * @param {string} data.gameid
      * @param {string} data.playerName
      */
-    joinGame: async (socket, {gameid, playerName}) => {
+    joinGame: async (socket, {gameid, playerName, secret}) => {
         const game = games.get(gameid);
 
-        if (!game) {
+        if (!game || game.result) {
             socket.send(JSON.stringify({
                 command: 'gameNotFound',
                 gameid: gameid,
             }));
 
             return;
-        } else if (game.player1Connected && game.player2Connected && game.player1 !== socket && game.player2 !== socket) {
+        } else if (game.player1Connected && game.player2Connected
+            && game.player1 !== socket && game.player2 !== socket
+            && game.player1Secret !== secret && game.player2Secret !== secret) {
             socket.send(JSON.stringify({
                 command: 'gameFull',
                 gameid: gameid,
@@ -149,21 +167,21 @@ const commands = {
             return;
         }
 
-        if (!game.player1Connected && game.player1 !== socket) {
+        if (!game.player1Connected && (!game.player1Secret || game.player1Secret === secret)) {
             game.player1 = socket;
             game.player1Name = playerName;
             game.player1Connected = true;
-        } else if (!game.player2Connected && game.player2 !== socket) {
+            game.player1Secret = randomString();
+        } else if (!game.player2Connected && (!game.player2Secret || game.player2Secret === secret)) {
             game.player2 = socket;
             game.player2Name = playerName;
             game.player2Connected = true;
+            game.player2Secret = randomString();
         } else {
             socket.send(JSON.stringify({
                 command: 'alreadyConnected',
                 gameid: gameid,
             }));
-
-            socket.close();
 
             return;
         }
@@ -186,6 +204,8 @@ const commands = {
 
                 timePlayer: game.timePlayer === Infinity ? -1 : game.timePlayer,
                 timeInc: game.timeInc,
+
+                secret: game.player1 === socket ? game.player1Secret : game.player2Secret,
             },
         }));
 
@@ -444,7 +464,7 @@ const commands = {
         mov += `${['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][newJ]}${8 - newI}`;
 
         if (enPassant) {
-            mov += ' e.p';
+            mov += ' e.p.';
         }
 
         if (promotion) {
@@ -473,6 +493,35 @@ const commands = {
 
         game.lastMoved = piece;
 
+        game.player1TimerFn && clearInterval(game.player1TimerFn);
+        game.player2TimerFn && clearInterval(game.player2TimerFn);
+        game.player1TimerFn = null;
+        game.player2TimerFn = null;
+
+        if (game.movements.length >= 2 && !game.result) {
+            if (game.currPlayer === 'white') {
+                game.player1TimerFn = setInterval(() => {
+                    game.player1Timer++;
+                    if (game.player1Timer >= game.timePlayer * 60) {
+                        game.won = 'black';
+                        game.result = '0–1';
+                    }
+                }, 1000);
+
+                game.movements.length > 2 && (game.player1Timer -= game.timeInc);
+            } else {
+                game.player2TimerFn = setInterval(() => {
+                    game.player2Timer++;
+                    if (game.player2Timer >= game.timePlayer * 60) {
+                        game.won = 'white';
+                        game.result = '1–0';
+                    }
+                }, 1000);
+
+                game.movements.length > 2 && (game.player1Timer -= game.timeInc);
+            }
+        }
+
         game.player1?.send(JSON.stringify({
             command: 'commitMovement',
             i,
@@ -500,35 +549,6 @@ const commands = {
                 player2Timer: game.player2Timer,
             },
         }));
-
-        game.player1TimerFn && clearInterval(game.player1TimerFn);
-        game.player2TimerFn && clearInterval(game.player2TimerFn);
-        game.player1TimerFn = null;
-        game.player2TimerFn = null;
-
-        if (game.movements.length >= 2 && !game.result) {
-            if (game.currPlayer === 'white') {
-                game.player1TimerFn = setInterval(() => {
-                    game.player1Timer++;
-                    if (game.player1Timer >= game.timePlayer * 60) {
-                        game.won = 'black';
-                        game.result = '0–1';
-                    }
-                }, 1000);
-
-                game.player1Timer && (game.player1Timer += game.timeInc);
-            } else {
-                game.player2TimerFn = setInterval(() => {
-                    game.player2Timer++;
-                    if (game.player2Timer >= game.timePlayer * 60) {
-                        game.won = 'white';
-                        game.result = '1–0';
-                    }
-                }, 1000);
-
-                game.player1Timer && (game.player1Timer += game.timeInc);
-            }
-        }
 
         game.spectators.forEach(spectator => {
             spectator.send(JSON.stringify({
