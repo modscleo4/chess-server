@@ -48,6 +48,7 @@ function randomString(n = 64) {
  *
  * @property {string[]} movements
  * @property {{i: number, j: number, newI: number, newJ: number}[]} pureMovements
+ * @property {string[]} fen
  * @property {Chess.Piece[]} takenPieces
  * @property {*[]} currentMove
  *
@@ -112,6 +113,7 @@ const commands = {
 
             movements: [],
             pureMovements: [],
+            fen: ['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'],
             takenPieces: [],
             currentMove: [],
 
@@ -369,9 +371,11 @@ const commands = {
 
         const KingW_i = game.board.findIndex(row => row.find(p => p?.char === 'K' && p?.color === 'white'));
         const KingW_j = game.board[KingW_i].findIndex(p => p?.char === 'K' && p?.color === 'white');
+        const KingW = game.board[KingW_i][KingW_j];
 
         const KingB_i = game.board.findIndex(row => row.find(p => p?.char === 'K' && p?.color === 'black'));
         const KingB_j = game.board[KingB_i].findIndex(p => p?.char === 'K' && p?.color === 'black');
+        const KingB = game.board[KingB_i][KingB_j];
 
         if (Chess.isChecked('white', KingW_i, KingW_j, game.board)) {
             if (game.currPlayer === 'white') {
@@ -397,50 +401,6 @@ const commands = {
 
         piece.neverMoved = false;
         takenPiece && game.takenPieces.push(takenPiece);
-
-        if (Chess.isCheckMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
-            game.won = 'black';
-            game.draw = false;
-
-            if (game.won) {
-                game.result = '0-1';
-            } else {
-                game.result = '1-0';
-            }
-
-            checkMate = true;
-        } else if (Chess.isCheckMate('black', KingB_i, KingB_j, game.board, game.lastMoved)) {
-            game.won = 'white';
-            game.draw = false;
-
-            if (game.won) {
-                game.result = '1-0';
-            } else {
-                game.result = '0-1';
-            }
-
-            checkMate = true;
-        } else if (Chess.isStaleMate('black', KingB_i, KingB_j, game.board, game.lastMoved) || Chess.isStaleMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
-            game.won = null;
-            game.draw = true;
-
-            game.result = '½–½';
-        } else if (Chess.insufficientMaterial(game.board)) {
-            game.won = null;
-            game.draw = true;
-
-            game.result = '½–½';
-        } else if (game.noCaptureOrPawnsQ === 100) {
-            game.won = null;
-            game.draw = true;
-
-            game.result = '½–½';
-        } else if (Chess.threefoldRepetition(game.movements)) {
-            game.won = null;
-            game.draw = true;
-
-            game.result = '½–½';
-        }
 
         const duplicate = Chess.findDuplicateMovement(piece, i, j, newI, newJ, boardCopy, game.lastMoved);
         let mov = `${piece.char !== 'P' ? piece.char : ''}`;
@@ -485,13 +445,124 @@ const commands = {
 
         game.pureMovements.push({i, j, newI, newJ});
 
-        if (!capture || piece.char !== 'P') {
+        if (!capture && piece.char !== 'P') {
             game.noCaptureOrPawnsQ++;
         } else {
             game.noCaptureOrPawnsQ = 0;
         }
 
         game.currPlayer = (game.currPlayer === 'white' ? 'black' : 'white');
+
+        let fen = '';
+        for (let x = 0; x < 8; x++) {
+            let empty = 0;
+            for (let y = 0; y < 8; y++) {
+                const p = game.board[x][y];
+                if (!p) {
+                    empty++;
+                    continue;
+                }
+
+                if (empty) {
+                    fen += empty;
+                    empty = 0;
+                }
+
+                fen += p.color === 'black' ? p.char.toLowerCase() : p.char;
+            }
+
+            if (empty) {
+                fen += empty;
+                empty = 0;
+            }
+
+            x < 7 && (fen += '/');
+        }
+
+        fen += ` ${game.currPlayer[0]}`;
+
+        let fenCastling = ' ';
+        if (KingW.neverMoved) {
+            if (game.board[7][0]?.neverMoved) {
+                fenCastling += 'Q';
+            }
+
+            if (game.board[7][7]?.neverMoved) {
+                fenCastling += 'K';
+            }
+        }
+
+        if (KingB.neverMoved) {
+            if (game.board[0][0]?.neverMoved) {
+                fenCastling += 'q';
+            }
+
+            if (game.board[0][7]?.neverMoved) {
+                fenCastling += 'k';
+            }
+        }
+
+        if (fenCastling === ' ') {
+            fenCastling = ' -';
+        }
+
+        fen += fenCastling;
+
+        // This is not FEN because we are only recording true En Passant (this is for threefold repetition)
+        if (piece.char === 'P' && piece.longMove && (piece.color === 'white' ? newI === 4 : newI === 3) && (game.board[newI][newJ - 1]?.char === 'P' && game.board[newI][newJ + 1]?.color !== piece.color || game.board[newI][newJ + 1]?.char === 'P' && game.board[newI][newJ + 1]?.color !== piece.color)) {
+            fen += ` ${['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][newJ]}${8 - newI + (piece.color === 'white' ? -1 : 1)}`;
+        } else {
+            fen += ' -';
+        }
+
+        fen += ` ${game.noCaptureOrPawnsQ}`;
+        fen += ` ${Math.floor(game.movements.length / 2 + 1)}`;
+
+        game.fen.push(fen);
+
+        if (Chess.isCheckMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
+            game.won = 'black';
+            game.draw = false;
+
+            if (game.won) {
+                game.result = '0-1';
+            } else {
+                game.result = '1-0';
+            }
+
+            checkMate = true;
+        } else if (Chess.isCheckMate('black', KingB_i, KingB_j, game.board, game.lastMoved)) {
+            game.won = 'white';
+            game.draw = false;
+
+            if (game.won) {
+                game.result = '1-0';
+            } else {
+                game.result = '0-1';
+            }
+
+            checkMate = true;
+        } else if (Chess.isStaleMate('black', KingB_i, KingB_j, game.board, game.lastMoved) || Chess.isStaleMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
+            game.won = null;
+            game.draw = true;
+
+            game.result = '½–½';
+        } else if (Chess.insufficientMaterial(game.board)) {
+            game.won = null;
+            game.draw = true;
+
+            game.result = '½–½';
+        } else if (game.noCaptureOrPawnsQ === 100) {
+            game.won = null;
+            game.draw = true;
+
+            game.result = '½–½';
+        } else if (Chess.threefoldRepetition(game.fen)) {
+            game.won = null;
+            game.draw = true;
+
+            game.result = '½–½';
+        }
 
         game.lastMoved = piece;
 
