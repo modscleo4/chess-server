@@ -211,31 +211,33 @@ const commands = {
 
         socket.gameid = gameid;
 
-        game.player1?.send(JSON.stringify({
-            command: 'start',
-            game: {
-                player1Name: game.player1Name,
-                player2Name: game.player2Name,
-            },
-        }));
-
-        game.player2?.send(JSON.stringify({
-            command: 'start',
-            game: {
-                player1Name: game.player1Name,
-                player2Name: game.player2Name,
-            },
-        }));
-
-        game.spectators.forEach(spectator => {
-            spectator.send(JSON.stringify({
+        if (game.player1Connected && game.player2Connected) {
+            game.player1?.send(JSON.stringify({
                 command: 'start',
                 game: {
                     player1Name: game.player1Name,
                     player2Name: game.player2Name,
                 },
             }));
-        });
+
+            game.player2?.send(JSON.stringify({
+                command: 'start',
+                game: {
+                    player1Name: game.player1Name,
+                    player2Name: game.player2Name,
+                },
+            }));
+
+            game.spectators.forEach(spectator => {
+                spectator.send(JSON.stringify({
+                    command: 'start',
+                    game: {
+                        player1Name: game.player1Name,
+                        player2Name: game.player2Name,
+                    },
+                }));
+            });
+        }
     },
 
     /**
