@@ -49,8 +49,9 @@ function randomString(n = 64) {
  * @property {string[]} movements
  * @property {{i: number, j: number, newI: number, newJ: number}[]} pureMovements
  * @property {string[]} fen
- * @property {Chess.Piece[]} takenPieces
+ * @property {Chess.Piece[][]} takenPieces
  * @property {*[]} currentMove
+ * @property {number} currMove
  *
  * @property {string | null} result
  * @property {number} noCaptureOrPawnsQ
@@ -64,6 +65,42 @@ function randomString(n = 64) {
  * @type {Map<string, Game>}
  */
 const games = new Map();
+
+/**
+ * @param {Game} game
+ * @param {string} [fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1']
+ */
+function regenerateArray(game, fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1') {
+    game.lastMoved = null;
+    game.board = Chess.generateArray(fen);
+    game.currPlayer = / (?<CurrPlayer>[wb])/.exec(fen)?.groups.CurrPlayer === 'w' ? 'white' : 'black';
+
+    const enPassant = / [wb] K?Q?k?q? (?<EnPassant>(?:-|[a-z]\d))/.exec(fen)?.groups.EnPassant;
+    if (enPassant && enPassant !== '-') {
+        const i = (8 - parseInt(enPassant[enPassant.length - 1])) === 5 ? 4 : 3;
+        const j = 'abcdefgh'.indexOf(enPassant[0]);
+
+        game.lastMoved = game.board[i][j];
+    }
+}
+
+/**
+ * @param {Game} game
+ * @param {number} n
+ */
+function boardAt(game, n) {
+    if (n < 0 || n > game.movements.length - 1) {
+        return;
+    }
+
+    regenerateArray(game, game.fen[n]);
+
+    const {i, j, newI, newJ, promoteTo} = Chess.pgnToCoord(game.movements[n], game.board, game.currPlayer, game.lastMoved);
+    game.currentMove = [{i, j, newI, newJ}];
+    game.currMove = n;
+
+    game.promoteTo = promoteTo;
+}
 
 const commands = {
     /**
@@ -116,6 +153,7 @@ const commands = {
             fen: ['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'],
             takenPieces: [],
             currentMove: [],
+            currMove: 0,
 
             result: null,
             noCaptureOrPawnsQ: 0,
@@ -147,6 +185,7 @@ const commands = {
      * @param {Object} data
      * @param {string} data.gameid
      * @param {string} data.playerName
+     * @param {string} data.secret
      */
     joinGame: async (socket, {gameid, playerName, secret}) => {
         const game = games.get(gameid);
@@ -400,7 +439,47 @@ const commands = {
         }
 
         piece.neverMoved = false;
-        takenPiece && game.takenPieces.push(takenPiece);
+        game.takenPieces.push([...(game.takenPieces[game.takenPieces.length - 1] ?? []), takenPiece].filter(p => p !== null));
+
+        const fen = Chess.boardToFEN(game.board, piece, game.currPlayer === 'white' ? 'black' : 'white', newI, newJ, KingW, KingB, game.noCaptureOrPawnsQ, game.movements);
+
+        game.fen.push(fen);
+
+        if (Chess.isCheckMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
+            game.won = 'black';
+            game.draw = false;
+
+            game.result = '0-1';
+
+            checkMate = true;
+        } else if (Chess.isCheckMate('black', KingB_i, KingB_j, game.board, game.lastMoved)) {
+            game.won = 'white';
+            game.draw = false;
+
+            game.result = '1-0';
+
+            checkMate = true;
+        } else if (Chess.isStaleMate('black', KingB_i, KingB_j, game.board, game.lastMoved) || Chess.isStaleMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
+            game.won = null;
+            game.draw = true;
+
+            game.result = '½–½';
+        } else if (Chess.insufficientMaterial(game.board)) {
+            game.won = null;
+            game.draw = true;
+
+            game.result = '½–½';
+        } else if (game.noCaptureOrPawnsQ === 150) {
+            game.won = null;
+            game.draw = true;
+
+            game.result = '½–½';
+        } else if (Chess.fivefoldRepetition(game.fen[game.fen.length - 1])) {
+            game.won = null;
+            game.draw = true;
+
+            game.result = '½–½';
+        }
 
         const duplicate = Chess.findDuplicateMovement(piece, i, j, newI, newJ, boardCopy, game.lastMoved);
         let mov = `${piece.char !== 'P' ? piece.char : ''}`;
@@ -452,117 +531,7 @@ const commands = {
         }
 
         game.currPlayer = (game.currPlayer === 'white' ? 'black' : 'white');
-
-        let fen = '';
-        for (let x = 0; x < 8; x++) {
-            let empty = 0;
-            for (let y = 0; y < 8; y++) {
-                const p = game.board[x][y];
-                if (!p) {
-                    empty++;
-                    continue;
-                }
-
-                if (empty) {
-                    fen += empty;
-                    empty = 0;
-                }
-
-                fen += p.color === 'black' ? p.char.toLowerCase() : p.char;
-            }
-
-            if (empty) {
-                fen += empty;
-                empty = 0;
-            }
-
-            x < 7 && (fen += '/');
-        }
-
-        fen += ` ${game.currPlayer[0]}`;
-
-        let fenCastling = ' ';
-        if (KingW.neverMoved) {
-            if (game.board[7][0]?.neverMoved) {
-                fenCastling += 'Q';
-            }
-
-            if (game.board[7][7]?.neverMoved) {
-                fenCastling += 'K';
-            }
-        }
-
-        if (KingB.neverMoved) {
-            if (game.board[0][0]?.neverMoved) {
-                fenCastling += 'q';
-            }
-
-            if (game.board[0][7]?.neverMoved) {
-                fenCastling += 'k';
-            }
-        }
-
-        if (fenCastling === ' ') {
-            fenCastling = ' -';
-        }
-
-        fen += fenCastling;
-
-        // This is not FEN because we are only recording true En Passant (this is for threefold repetition)
-        if (piece.char === 'P' && piece.longMove && (piece.color === 'white' ? newI === 4 : newI === 3) && (game.board[newI][newJ - 1]?.char === 'P' && game.board[newI][newJ + 1]?.color !== piece.color || game.board[newI][newJ + 1]?.char === 'P' && game.board[newI][newJ + 1]?.color !== piece.color)) {
-            fen += ` ${['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][newJ]}${8 - newI + (piece.color === 'white' ? -1 : 1)}`;
-        } else {
-            fen += ' -';
-        }
-
-        fen += ` ${game.noCaptureOrPawnsQ}`;
-        fen += ` ${Math.floor(game.movements.length / 2 + 1)}`;
-
-        game.fen.push(fen);
-
-        if (Chess.isCheckMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
-            game.won = 'black';
-            game.draw = false;
-
-            if (game.won) {
-                game.result = '0-1';
-            } else {
-                game.result = '1-0';
-            }
-
-            checkMate = true;
-        } else if (Chess.isCheckMate('black', KingB_i, KingB_j, game.board, game.lastMoved)) {
-            game.won = 'white';
-            game.draw = false;
-
-            if (game.won) {
-                game.result = '1-0';
-            } else {
-                game.result = '0-1';
-            }
-
-            checkMate = true;
-        } else if (Chess.isStaleMate('black', KingB_i, KingB_j, game.board, game.lastMoved) || Chess.isStaleMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
-            game.won = null;
-            game.draw = true;
-
-            game.result = '½–½';
-        } else if (Chess.insufficientMaterial(game.board)) {
-            game.won = null;
-            game.draw = true;
-
-            game.result = '½–½';
-        } else if (game.noCaptureOrPawnsQ === 100) {
-            game.won = null;
-            game.draw = true;
-
-            game.result = '½–½';
-        } else if (Chess.threefoldRepetition(game.fen)) {
-            game.won = null;
-            game.draw = true;
-
-            game.result = '½–½';
-        }
+        game.currMove++;
 
         game.lastMoved = piece;
 
@@ -638,6 +607,163 @@ const commands = {
                 },
             }));
         });
+    },
+
+    requestUndo: async (socket) => {
+        const game = games.get(socket.gameid);
+        if (!game) {
+            return;
+        }
+
+        if (game.player1 === socket) {
+            game.player2?.send(JSON.stringify({
+                command: 'requestUndo',
+            }));
+        } else {
+            game.player1?.send(JSON.stringify({
+                command: 'requestUndo',
+            }));
+        }
+    },
+
+    approveUndo: async (socket) => {
+        const game = games.get(socket.gameid);
+        if (!game) {
+            return;
+        }
+
+        boardAt(game, game.currMove - 1);
+        game.movements.pop();
+        game.fen.pop();
+        game.takenPieces.pop();
+
+        game.player1?.send(JSON.stringify({
+            command: 'undo',
+        }));
+
+        game.player2?.send(JSON.stringify({
+            command: 'undo',
+        }));
+
+        game.spectators.forEach(spectator => {
+            spectator.send(JSON.stringify({
+                command: 'undo',
+            }));
+        });
+    },
+
+    forfeit: async (socket) => {
+        const game = games.get(socket.gameid);
+        if (!game) {
+            return;
+        }
+
+        game.won = socket === game.player1 ? 'black' : 'white';
+        game.draw = false;
+
+        game.result = game.won === 'white' ? '1-0' : '0 - 1';
+
+        game.player1?.send(JSON.stringify({
+            command: 'forfeit',
+            won: game.won,
+        }));
+
+        game.player2?.send(JSON.stringify({
+            command: 'forfeit',
+            won: game.won,
+        }));
+
+        game.spectators.forEach(spectator => {
+            spectator.send(JSON.stringify({
+                command: 'forfeit',
+                won: game.won,
+            }));
+        });
+    },
+
+    requestDraw: async (socket) => {
+        const game = games.get(socket.gameid);
+        if (!game) {
+            return;
+        }
+
+        let reason = 'requested';
+        if (game.noCaptureOrPawnsQ === 100) {
+            reason = '50-moves';
+        } else if (Chess.threefoldRepetition(game.fen[game.fen.length - 1])) {
+            reason = 'threefold';
+        }
+
+        if (reason === 'requested') {
+            if (game.player1 === socket) {
+                game.player2?.send(JSON.stringify({
+                    command: 'requestDraw',
+                }));
+            } else {
+                game.player1?.send(JSON.stringify({
+                    command: 'requestDraw',
+                }));
+            }
+
+            return;
+        }
+
+        game.won = null;
+        game.draw = true;
+
+        game.result = '½–½';
+
+        game.player1?.send(JSON.stringify({
+            command: 'draw',
+            reason,
+        }));
+
+        game.player2?.send(JSON.stringify({
+            command: 'draw',
+            reason,
+        }));
+
+        game.spectators.forEach(spectator => {
+            spectator.send(JSON.stringify({
+                command: 'draw',
+                reason,
+            }));
+        });
+    },
+
+    approveDraw: async (socket) => {
+        const game = games.get(socket.gameid);
+        if (!game) {
+            return;
+        }
+
+        let reason = 'requested';
+
+        game.won = null;
+        game.draw = true;
+
+        game.result = '½–½';
+
+        game.player1?.send(JSON.stringify({
+            command: 'draw',
+            reason,
+        }));
+
+        game.player2?.send(JSON.stringify({
+            command: 'draw',
+            reason,
+        }));
+
+        game.spectators.forEach(spectator => {
+            spectator.send(JSON.stringify({
+                command: 'draw',
+                reason,
+            }));
+        });
+    },
+
+    rejectDraw() {
+
     },
 };
 
