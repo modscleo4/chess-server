@@ -43,7 +43,7 @@ function randomString(n = 64) {
  * @property {string} player2Color
  * @property {string | null} player2Secret
  *
- * @property {string} currPlayer
+ * @property {Chess.PlayerColor} currPlayer
  * @property {Chess.Piece | null} lastMoved
  *
  * @property {string[]} movements
@@ -336,7 +336,7 @@ const commands = {
      * @param {number} data.j
      * @param {number} data.newI
      * @param {number} data.newJ
-     * @param {string} data.promoteTo
+     * @param {('Q'|'B'|'N'|'R')} data.promoteTo
      */
     commitMovement: async (socket, {i, j, newI, newJ, promoteTo}) => {
         const game = games.get(socket.gameid);
@@ -355,133 +355,35 @@ const commands = {
         }
 
         const piece = game.board[i][j];
-
         if (!piece) {
             return;
         }
 
-        if (newI === i && newJ === j) {
+        const move = Chess.move(i, j, newI, newJ, game.board, game.currPlayer, game.lastMoved, promoteTo);
+        if (!move) {
             return;
         }
 
-        if (!Chess.isValidMove(piece, i, j, newI, newJ, game.board, game.lastMoved)) {
-            return;
-        }
+        const {capture = false, enPassant = false, promotion = false, castling = 0, check = false, takenPiece = null} = move;
 
-        let capture = false;
-        let enPassant = false;
-        let promotion = false;
-        let castling = 0;
-        let check = false;
-        let checkMate = false;
+        const King_i = game.board.findIndex(row => row.find(p => p?.char === 'K' && p?.color !== game.currPlayer));
+        const King_j = game.board[King_i].findIndex(p => p?.char === 'K' && p?.color !== game.currPlayer);
+        const King = game.board[King_i][King_j];
 
-        let takenPiece = game.board[newI][newJ];
-        if (piece.char === 'P' && !takenPiece && newJ !== j && ((piece.color === 'white' && i === 3) || (piece.color === 'black' && i === 4))) {
-            enPassant = true;
-            takenPiece = game.board[i][newJ];
-            game.board[i][newJ] = null;
-        }
+        King && (King.checked = check);
 
-        capture = !!takenPiece;
-
-        const boardCopy = game.board.map(r => [...r]);
-
-        game.board[i][j] = null;
-        game.board[newI][newJ] = piece;
-
-        if (piece.char === 'P' && [0, 7].includes(newI)) {
-            Chess.promove(piece, newI, newJ, promoteTo, game.board);
-            promotion = true;
-        }
-
-        if (piece.char === 'K' && Math.abs(newJ - j) === 2) {
-            if (newJ > j) {
-                const rook = game.board[i][7];
-                game.board[i][j + 1] = rook;
-                game.board[i][7] = null;
-                castling = 1;
-            } else {
-                const rook = game.board[i][0];
-                game.board[i][j - 1] = rook;
-                game.board[i][0] = null;
-                castling = 2;
-            }
-        }
-
-        const KingW_i = game.board.findIndex(row => row.find(p => p?.char === 'K' && p?.color === 'white'));
-        const KingW_j = game.board[KingW_i].findIndex(p => p?.char === 'K' && p?.color === 'white');
-        const KingW = game.board[KingW_i][KingW_j];
-
-        const KingB_i = game.board.findIndex(row => row.find(p => p?.char === 'K' && p?.color === 'black'));
-        const KingB_j = game.board[KingB_i].findIndex(p => p?.char === 'K' && p?.color === 'black');
-        const KingB = game.board[KingB_i][KingB_j];
-
-        if (Chess.isChecked('white', KingW_i, KingW_j, game.board)) {
-            if (game.currPlayer === 'white') {
-                game.board = boardCopy;
-                return;
-            } else {
-                check = true;
-            }
-        }
-
-        if (Chess.isChecked('black', KingB_i, KingB_j, game.board)) {
-            if (game.currPlayer === 'black') {
-                game.board = boardCopy;
-                return;
-            } else {
-                check = true;
-            }
-        }
-
-        if (piece.char === 'P' && Math.abs(newI - i) === 2) {
-            piece.longMove = true;
-        }
-
-        piece.neverMoved = false;
         game.takenPieces.push([...(game.takenPieces[game.takenPieces.length - 1] ?? []), takenPiece].filter(p => p !== null));
 
-        const fen = Chess.boardToFEN(game.board, piece, game.currPlayer === 'white' ? 'black' : 'white', newI, newJ, KingW, KingB, game.noCaptureOrPawnsQ, game.movements);
+        const fen = Chess.boardToFEN(game.board, piece, game.currPlayer === 'white' ? 'black' : 'white', newI, newJ, game.noCaptureOrPawnsQ, game.movements);
 
         game.fen.push(fen);
 
-        if (Chess.isCheckMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
-            game.won = 'black';
-            game.draw = false;
+        const {won, draw, result, reason} = Chess.result(game.board, game.currPlayer, game.lastMoved, game.noCaptureOrPawnsQ, game.fen);
+        game.won = won;
+        game.draw = draw;
+        result && (game.result = result);
 
-            game.result = '0-1';
-
-            checkMate = true;
-        } else if (Chess.isCheckMate('black', KingB_i, KingB_j, game.board, game.lastMoved)) {
-            game.won = 'white';
-            game.draw = false;
-
-            game.result = '1-0';
-
-            checkMate = true;
-        } else if (Chess.isStaleMate('black', KingB_i, KingB_j, game.board, game.lastMoved) || Chess.isStaleMate('white', KingW_i, KingW_j, game.board, game.lastMoved)) {
-            game.won = null;
-            game.draw = true;
-
-            game.result = '½–½';
-        } else if (Chess.insufficientMaterial(game.board)) {
-            game.won = null;
-            game.draw = true;
-
-            game.result = '½–½';
-        } else if (game.noCaptureOrPawnsQ === 150) {
-            game.won = null;
-            game.draw = true;
-
-            game.result = '½–½';
-        } else if (Chess.fivefoldRepetition(game.fen[game.fen.length - 1])) {
-            game.won = null;
-            game.draw = true;
-
-            game.result = '½–½';
-        }
-
-        const duplicate = Chess.findDuplicateMovement(piece, i, j, newI, newJ, boardCopy, game.lastMoved);
+        const duplicate = Chess.findDuplicateMovement(piece, i, j, newI, newJ, game.board, game.lastMoved);
         let mov = `${piece.char !== 'P' ? piece.char : ''}`;
 
         if (duplicate) {
@@ -504,23 +406,23 @@ const commands = {
 
         mov += `${['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][newJ]}${8 - newI}`;
 
-        if (enPassant) {
-            mov += ' e.p.';
-        }
-
         if (promotion) {
             mov += promoteTo;
         }
 
-        if (checkMate) {
-            game.movements.push(mov + '#');
+        if (reason === 'checkmate') {
+            mov += '#';
         } else if (check) {
-            game.movements.push(mov + '+');
+            mov += '+';
         } else if (castling) {
-            game.movements.push(['0-0', '0-0-0'][castling - 1]);
-        } else {
-            game.movements.push(mov);
+            mov = ['0-0', '0-0-0'][castling - 1];
         }
+
+        if (enPassant) {
+            mov += ' e.p.';
+        }
+
+        game.movements.push(mov);
 
         game.pureMovements.push({i, j, newI, newJ});
 
